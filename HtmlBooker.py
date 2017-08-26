@@ -1,4 +1,5 @@
-import urllib, urllib.request
+from urllib.request import urlopen
+from urllib.parse import urljoin
 import sys
 from html.parser import HTMLParser
 
@@ -9,7 +10,8 @@ from html.parser import HTMLParser
 
 class PageVertex: 
     """simple object wrapper for SiteGraph object"""
-    def __init__(self):
+    def __init__(self, obj):
+        self.obj = obj
         self.nbrs = set()
     def addNbr(self, nbr):
         self.nbrs.add(nbr) 
@@ -49,33 +51,43 @@ class Swarmling(HTMLParser):
         self.reset()
         super().__init__()
     def handle_starttag(self, tag, attrs):
-        if tag == 'a' and hasattr(attrs, 'href'):
-            self.handle_link(attrs.href)
+        # convert attrs to dict to support attribute mapping;
+        # for links this should be fine, but some attributes
+        # might have multiple values
+        attrs = {k:v for k,v in attrs}
+        if tag == 'a' and 'href' in attrs:
+            self.handle_link(attrs['href'])
         # return super().handle_starttag(tag, attrs)
     def handle_link(self, href):
-        self.owner.graph.addEdge(self.page, href)
+        self.owner.graph.addEdge( (self.page, href) )
         self.owner.spawn(href)
     def handle_data(self, data):
-        return super().handle_data(data)
+        super().handle_data(data)
 
 class Swarm():
     """swarmling factory that recursively follows domain layout"""
     def __init__(self, homepage):
         super().__init__()
         self.graph = SiteGraph()
+        self.homepage = homepage
         self.pages = [homepage]  # first element is homepage
         self.run(homepage)
     def run(self, page):
-        self.hardspawn(page)
+        print('RUN>', page)
+        self._spawn(page)
         self.graph.compileVerts()
     def spawn(self, page):
-        if page not in pages:
-            pages.append(page)
-            self.hardspawn(page)
-    def hardspawn(self, page):
-        byteread = urllib.request.urlopen(page)
+        # IDEA: Create a set of webpages which has a domain,
+        # and can resolve absolute and relative URLs identically
+        page = urljoin(self.homepage, page)
+        if page not in self.pages:
+            print('SPAWN>',page)
+            self.pages.append(page)
+            self._spawn(page)
+    def _spawn(self, page):
+        byteread = urlopen(page)
         content = byteread.read().decode('utf-8')  # read and decode
-        print(content, '\n' + 50* '=' +'\n')
+        # print(content, '\n' + 50* '=' +'\n')
         ling = Swarmling(page, owner=self)
         ling.feed(content)
         ling.close()

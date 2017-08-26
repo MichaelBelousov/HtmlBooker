@@ -1,0 +1,8 @@
+#python
+__pycache__
+*.pyc
+
+#venv
+bin
+lib
+share

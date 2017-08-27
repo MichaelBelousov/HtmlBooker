@@ -7,7 +7,7 @@ from html.parser import HTMLParser
 from weakref import ref
 import statistics as stats
 from abc import ABCMeta
-import html2text
+from html2text import html2text
 
 # TODO: Rewrite this entire thing to work off a single table of contents if available
 # talk about overengineering
@@ -22,9 +22,10 @@ def within_domain(site, domain):
 
 class PageVertex: 
     """simple object wrapper for SiteGraph object"""
-    def __init__(self, obj, owngraph):
+    def __init__(self, obj, owngraph=None):
         self.obj = obj
-        self.owngraph = ref(owngraph)
+        if owngraph is not None:
+            self.owngraph = ref(owngraph)
         self.nbrs = []
     def addNbr(self, nbr):
         if nbr not in self.nbrs:
@@ -32,9 +33,9 @@ class PageVertex:
     def __eq__(self, other):
         return self.obj == other.obj
     def __str__(self):
-        return str(self.obj)
+        return 'VERT: ' + str(self.obj)
     def __repr__(self):
-        return repr(self.obj)
+        return 'VERT: ' + repr(self.obj)
     def __hash__(self):
         return hash(self.obj)
 
@@ -78,9 +79,9 @@ class SiteGraph:
             for e in (e for e in self.edges if e[0] == v ):
                 v.addNbr(e[1])
     def get_vert(self, page):
-        for v in verticies:
+        for v in self.vertices:
             if v.obj == page:
-                return page
+                return v
     def get_page_types(self):
         """determine the page types of all verts"""
         linksto = {}
@@ -91,7 +92,6 @@ class SiteGraph:
         linksfrom = {}
         for v in self.vertices:
             linksfrom[v] = len(v.nbrs)
-        # [print('{} : {}'.format(k, linksfrom[k])) for k in linksfrom]
         # use statistical mode to determine whether pages are sequential and how
         mode = stats.mode(linksto.values())
         result = {}
@@ -104,10 +104,12 @@ class SiteGraph:
                 result[v] = NonSequential
         # find the nonsequential page with the most links
         nonseqpages = [k for k in linksfrom if result[k] == NonSequential]
-        print(nonseqpages)
+        # print(nonseqpages)
         # print('Linksfrom:', linksfrom)
         sitemappage = max(nonseqpages, key=lambda t: linksfrom[t])
         result[sitemappage] = SiteMap
+        # dirty fix TODO integrate this fix into the process itself
+        result = {k.obj:v for k,v in result.items()}
         return result
             
 class Swarmling(HTMLParser):
@@ -129,7 +131,7 @@ class Swarmling(HTMLParser):
         # TODO: use some kind of multidict for attrs
         # TODO: ignore URLs like "mailto:"
         attrs = {k:v for k,v in attrs}
-        if tag == 'a':
+        if tag == 'a' and 'href' in attrs:
             # if the URL is local, it should be invalid. 
             # Truly invalid links need to be handled separately,
             # likely by switching to using a path validator for
@@ -190,46 +192,49 @@ class TOCParser(HTMLParser):
         super().__init__()
     def handle_starttag(self, tag, attrs):
         attrs = {k:v for k,v in attrs}
-        href = attrs['href']
-        if href[0] == '#': return
-        if not validators.url(href):
-            href = urljoin(self.homepage, href)
-        self.links.append(href)
+        if tag == 'a' and 'href' in attrs:
+            href = attrs['href']
+            if href[0] == '#': return
+            if not validators.url(href):
+                href = urljoin(self.homepage, href)
+            if within_domain(href, self.homepage):
+                self.links.append(href)
     def get_toc_order(self):
         return self.links
 
 def order_pages(swarm):
-    pages = swarm.get_page_types()
+    pages = swarm.graph.get_page_types()
     # find table of contents
     tableofcon = ''
     for p in pages:
         if pages[p] == SiteMap:
             tableofcon = p
     assert tableofcon
-    tableproc = TOCParser()
+    tableproc = TOCParser(swarm.homepage)
     tableproc.feed(visited_pages[swarm.homepage])
     tableproc.close()
     order = tableproc.get_toc_order()
     order = [p for p in order if pages[p] == SequenceCap]
-    first = order[0]
-    first = swarm.graph.get_vert(first)
-    end = order[0]
-    end = swarm.graph.get_vert(end)
+    start = swarm.graph.get_vert(order[0])
+    end = swarm.graph.get_vert(order[1])
     # follow the links from the start to the end
     result = []
-    prv = ''
+    prv = swarm.graph.get_vert(swarm.homepage)
     curr = start
     while curr != end:
-        result.append(curr)
+        result.append(curr.obj)
         nxt = []
-        for n in curr.nbrs:
-            if pages[n] == Sequential and nxt != prv:
-                nxt.append(n)
+        for nbr in curr.nbrs:
+            if (pages[nbr.obj] in (Sequential, SequenceCap)
+                and nbr != prv 
+                and nbr != curr):
+                # hacky, something is wrong here
+                nbr = swarm.graph.get_vert(nbr.obj)
+                nxt.append(nbr)
         prv = curr
         curr = nxt[0]
-    result.append(end)
+    result.append(end.obj)
     return result
-
 
 # TODO: move a lot of pieces i.e. main swarm and target into the global scope
 # TODO: separate pieces into multiple files
@@ -244,9 +249,12 @@ def main(args):
     # the target, and their types relative to reformating it 
     # into a book
     s = Swarm(target)
+    # [print(i, '\n\t', i.nbrs) for i in s.graph.vertices]
     book = order_pages(s)
-    for p in book:
-        print(p)
+    with open('out', 'r+') as f:
+        for p in book:
+            # print(p)
+            f.write(html2text(visited_pages[p]))
 
 if __name__ == '__main__':
     main(sys.argv)

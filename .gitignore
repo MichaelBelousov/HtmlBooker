@@ -6,3 +6,6 @@ __pycache__
 bin
 lib
 share
+
+#specific
+out

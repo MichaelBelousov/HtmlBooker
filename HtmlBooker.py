@@ -6,6 +6,12 @@ import sys
 from html.parser import HTMLParser
 from weakref import ref
 
+def almost(iter, key=lambda t: t, percent=0.8):
+    """this is a pile of horse crock"""
+    assert percent <= 1 and percent >= 0
+    l = [bool(key(i)) for i in iter]
+    return sum(l)/len(l) > percent 
+
 def within_domain(site, domain):
     return (validators.url(site) and validators.url(domain) and 
             urlparse(site).netloc == urlparse(domain).netloc)
@@ -15,17 +21,25 @@ class PageVertex:
     def __init__(self, obj, owngraph):
         self.obj = obj
         self.owngraph = ref(owngraph)
-        self.nbrs = set()
+        self.nbrs = []
     def addNbr(self, nbr):
         if nbr not in self.nbrs:
-            self.nbrs.add(nbr) 
+            self.nbrs.append(nbr) 
     def sequential(self):
-        all( (p in owngraph().vertices
-        pass
+        """returns true if the vertex in its graph forms
+        a unique sequence of edges with other vertices"""
+        verts = self.owngraph().vertices.copy()
+        verts.remove(self)
+        return len([v for v in verts if v in self.nbrs])
+        # return not almost( (v in self.nbrs for v in verts) )
     def __eq__(self, other):
         return str(self) == str(other) 
     def __str__(self):
         return str(self.obj)
+    def __repr__(self):
+        return repr(self.obj)
+    def __hash__(self):
+        return hash(self.obj)
 
 class SiteGraph:
     """a directed graph of a domain's hyper links, ignoring
@@ -38,12 +52,12 @@ class SiteGraph:
         assert len(edge) == 2
         for e in edge:
             if e not in self.vertices:
-                self.add_vertex(e, self)
+                self.add_vertex(e)
         if edge not in self.edges:
             self.edges.append(edge)
     def add_vertex(self, vertex):
         """wrap any object as a vertex"""
-        vertex = PageVertex(vertex)
+        vertex = PageVertex(vertex, self)
         self.vertices.append(vertex)
     def compile_verts(self):
         """compiles vertex info"""
@@ -51,11 +65,11 @@ class SiteGraph:
             for e in (e for e in self.edges if e[0] is v ):
                 v.addNbr(e[1])
     # TODO: switch to underlined naming_scheme from camelcase namingScheme
-    def check_in_sequence(self):
+    def sequential_verts(self):
         """checks the entire graph for all sequential vertices"""
-        result = []
+        result = {}
         for v in self.vertices:
-            result.append(v.sequential())
+            result[v] = v.sequential()
         return result
             
 class Swarmling(HTMLParser):
@@ -132,10 +146,10 @@ def main(args):
 
     # print('Pages: ')
     # [print(p) for p in s.pages]
-    print('Edges: ')
-    [print(e) for e in s.graph.edges]
-
-    # print('verts: ', s.graph.vertices)
+    # print('Edges: ')
+    # [print(e) for e in s.graph.edges]
+    
+    [print('{}\t:\t{}'.format(k,v)) for k,v in s.graph.sequential_verts().items()]
 
 if __name__ == '__main__':
     main(sys.argv)

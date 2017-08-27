@@ -5,12 +5,8 @@ from urllib.error import *
 import sys
 from html.parser import HTMLParser
 from weakref import ref
-
-def almost(iter, key=lambda t: t, percent=0.8):
-    """this is a pile of horse crock"""
-    assert percent <= 1 and percent >= 0
-    l = [bool(key(i)) for i in iter]
-    return sum(l)/len(l) > percent 
+import statistics as stats
+from abc import ABCMeta
 
 def within_domain(site, domain):
     return (validators.url(site) and validators.url(domain) and 
@@ -25,13 +21,6 @@ class PageVertex:
     def addNbr(self, nbr):
         if nbr not in self.nbrs:
             self.nbrs.append(nbr) 
-    def sequential(self):
-        """returns true if the vertex in its graph forms
-        a unique sequence of edges with other vertices"""
-        verts = self.owngraph().vertices.copy()
-        verts.remove(self)
-        return len([v for v in verts if v in self.nbrs])
-        # return not almost( (v in self.nbrs for v in verts) )
     def __eq__(self, other):
         return self.obj == other.obj
     def __str__(self):
@@ -40,6 +29,19 @@ class PageVertex:
         return repr(self.obj)
     def __hash__(self):
         return hash(self.obj)
+
+# PageTypes
+ABCMeta.__repr__ = lambda t: t.name
+
+class Sequential(metaclass=ABCMeta):
+    name = 'Sequential'
+class SequenceCap(metaclass=ABCMeta):
+    name = 'SequenceCap'
+SequenceCap.register(Sequential)
+class NonSequential(metaclass=ABCMeta):
+    name = 'NonSequential'
+class SiteMap(metaclass=ABCMeta):
+    name = 'SiteMap'
 
 class SiteGraph:
     """a directed graph of a domain's hyper links, ignoring
@@ -66,11 +68,33 @@ class SiteGraph:
         for v in self.vertices:
             for e in (e for e in self.edges if e[0] == v ):
                 v.addNbr(e[1])
-    def sequential_verts(self):
-        """checks the entire graph for all sequential vertices"""
-        result = {}
+    def get_page_types(self):
+        """determine the sequential quality of all verts"""
+        linksto = {}
         for v in self.vertices:
-            result[v] = v.sequential()
+            other_verts = self.vertices.copy()
+            other_verts.remove(v)
+            linksto[v] = sum( (v in u.nbrs for u in other_verts) )
+        linksfrom = {}
+        for v in self.vertices:
+            linksfrom[v] = len(v.nbrs)
+        # [print('{} : {}'.format(k, linksfrom[k])) for k in linksfrom]
+        # use statistical mode to determine whether pages are sequential and how
+        mode = stats.mode(linksto.values())
+        result = {}
+        for v in linksto:
+            if linksto[v] == mode:
+                result[v] = Sequential
+            elif linksto[v] == mode-1:
+                result[v] = SequenceCap
+            else:
+                result[v] = NonSequential
+        # find the nonsequential page with the most links
+        nonseqpages = [k for k in linksfrom if result[k] == NonSequential]
+        print(nonseqpages)
+        # print('Linksfrom:', linksfrom)
+        sitemappage = max(nonseqpages, key=lambda t: linksfrom[t])
+        result[sitemappage] = SiteMap
         return result
             
 class Swarmling(HTMLParser):
@@ -100,6 +124,8 @@ class Swarmling(HTMLParser):
     def handle_link(self, href):
         if self.owner().spawn(href):
             self.owner().graph.add_edge( (self.page, href) )
+    def handle_data(self, data):
+        return super().handle_data(data)
 
 class Swarm:
     """swarmling factory"""
@@ -116,7 +142,7 @@ class Swarm:
     def spawn(self, page):
         result = False
         if page not in self.pages and within_domain(page, self.homepage): 
-            print('SPAWN>',page)
+            # print('SPAWN>',page)
             self.pages.append(page)
             self._spawn(page)
         if within_domain(page, self.homepage):
@@ -146,12 +172,12 @@ def main(args):
     print('Edges: ')
     [print(e) for e in s.graph.edges]
     print('Vert Values: ')
-    [print('{}\t:\t{}'.format(k,v)) for k,v in s.graph.sequential_verts().items()]
-    print('Vert Nbrs')
-    for v in s.graph.vertices:
-        print(v)
-        for i in v.nbrs:
-            print('\t', i)
+    [print('{}\t:\t{}'.format(k,v)) for k,v in s.graph.get_page_types().items()]
+    # print('Vert Nbrs')
+    # for v in s.graph.vertices:
+        # print(v)
+        # for i in v.nbrs:
+            # print('\t', i)
 
 if __name__ == '__main__':
     main(sys.argv)

@@ -7,8 +7,16 @@ from html.parser import HTMLParser
 from weakref import ref
 import statistics as stats
 from abc import ABCMeta
+import html2text
+
+# TODO: Rewrite this entire thing to work off a single table of contents if available
+# talk about overengineering
+
+visited_pages = {}
 
 def within_domain(site, domain):
+    """Determine whether the given site is in the
+    given domain. This function is gross"""
     return (validators.url(site) and validators.url(domain) and 
             urlparse(site).netloc == urlparse(domain).netloc)
 
@@ -30,6 +38,7 @@ class PageVertex:
     def __hash__(self):
         return hash(self.obj)
 
+# TODO: Rename page types as actual page types
 # PageTypes
 ABCMeta.__repr__ = lambda t: t.name
 
@@ -68,8 +77,12 @@ class SiteGraph:
         for v in self.vertices:
             for e in (e for e in self.edges if e[0] == v ):
                 v.addNbr(e[1])
+    def get_vert(self, page):
+        for v in verticies:
+            if v.obj == page:
+                return page
     def get_page_types(self):
-        """determine the sequential quality of all verts"""
+        """determine the page types of all verts"""
         linksto = {}
         for v in self.vertices:
             other_verts = self.vertices.copy()
@@ -105,17 +118,22 @@ class Swarmling(HTMLParser):
         self.page = page
         self.reset()
         super().__init__()
+    def feed(self, content):
+        global visited_pages
+        visited_pages[self.page] = content
+        return super().feed(content)
     def handle_starttag(self, tag, attrs):
         # convert attrs to dict to support attribute mapping;
         # for links this should be fine, but some attributes
         # might have multiple values
+        # TODO: use some kind of multidict for attrs
         # TODO: ignore URLs like "mailto:"
         attrs = {k:v for k,v in attrs}
-        if tag == 'a' and 'href' in attrs:
+        if tag == 'a':
             # if the URL is local, it should be invalid. 
             # Truly invalid links need to be handled separately,
             # likely by switching to using a path validator for
-            # local URLs
+            # validaing local URLs
             href = attrs['href']
             if href[0] == '#': return
             if not validators.url(href):
@@ -128,7 +146,8 @@ class Swarmling(HTMLParser):
         return super().handle_data(data)
 
 class Swarm:
-    """swarmling factory"""
+    """factory that employs swarmlings to
+    gather data on its target site's link layout"""
     def __init__(self, homepage):
         super().__init__()
         self.graph = SiteGraph()
@@ -140,6 +159,8 @@ class Swarm:
         self._spawn(page)
         self.graph.compile_verts()
     def spawn(self, page):
+        """safe spawner, returns the condition of whetheri
+        it actually decided to spawn on the target location"""
         result = False
         if page not in self.pages and within_domain(page, self.homepage): 
             # print('SPAWN>',page)
@@ -160,24 +181,72 @@ class Swarm:
         except HTTPError as e:
             print(e)
 
+class TOCParser(HTMLParser):
+    """table of contents parser"""
+    def __init__(self, homepage):
+        self.homepage = homepage
+        self.reset()
+        self.links = []
+        super().__init__()
+    def handle_starttag(self, tag, attrs):
+        attrs = {k:v for k,v in attrs}
+        href = attrs['href']
+        if href[0] == '#': return
+        if not validators.url(href):
+            href = urljoin(self.homepage, href)
+        self.links.append(href)
+    def get_toc_order(self):
+        return self.links
+
+def order_pages(swarm):
+    pages = swarm.get_page_types()
+    # find table of contents
+    tableofcon = ''
+    for p in pages:
+        if pages[p] == SiteMap:
+            tableofcon = p
+    assert tableofcon
+    tableproc = TOCParser()
+    tableproc.feed(visited_pages[swarm.homepage])
+    tableproc.close()
+    order = tableproc.get_toc_order()
+    order = [p for p in order if pages[p] == SequenceCap]
+    first = order[0]
+    first = swarm.graph.get_vert(first)
+    end = order[0]
+    end = swarm.graph.get_vert(end)
+    # follow the links from the start to the end
+    result = []
+    prv = ''
+    curr = start
+    while curr != end:
+        result.append(curr)
+        nxt = []
+        for n in curr.nbrs:
+            if pages[n] == Sequential and nxt != prv:
+                nxt.append(n)
+        prv = curr
+        curr = nxt[0]
+    result.append(end)
+    return result
+
+
+# TODO: move a lot of pieces i.e. main swarm and target into the global scope
+# TODO: separate pieces into multiple files
+# NOTE: create a case-by-base analysis for different html books,
+# those with table of contents (get book order right there), those without, etc
 def main(args):
     if len(args) != 2:
-        # IDEA: find a more specific exception/make one
+        # TODO: find a more specific exception/make one
         raise Exception('Too many arguments passed to the script')
     target = args[1]
+    # The swarm will take its time determining all the pages on
+    # the target, and their types relative to reformating it 
+    # into a book
     s = Swarm(target)
-
-    # print('Pages: ')
-    # [print(p) for p in s.pages]
-    print('Edges: ')
-    [print(e) for e in s.graph.edges]
-    print('Vert Values: ')
-    [print('{}\t:\t{}'.format(k,v)) for k,v in s.graph.get_page_types().items()]
-    # print('Vert Nbrs')
-    # for v in s.graph.vertices:
-        # print(v)
-        # for i in v.nbrs:
-            # print('\t', i)
+    book = order_pages(s)
+    for p in book:
+        print(p)
 
 if __name__ == '__main__':
     main(sys.argv)

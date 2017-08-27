@@ -1,12 +1,13 @@
+import validators
 from urllib.request import urlopen
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
+from urllib.error import *
 import sys
 from html.parser import HTMLParser
 
-# import plotly.plotly as ply
-# from plotly.graph_objs import *
-# import networkx as nx
-# import matplotlib.pyplot as plt
+def within_domain(site, domain):
+    return (validators.url(site) and validators.url(domain) and 
+            urlparse(site).netloc == urlparse(domain).netloc)
 
 class PageVertex: 
     """simple object wrapper for SiteGraph object"""
@@ -14,7 +15,8 @@ class PageVertex:
         self.obj = obj
         self.nbrs = set()
     def addNbr(self, nbr):
-        self.nbrs.add(nbr) 
+        if nbr not in self.nbrs:
+            self.nbrs.add(nbr) 
 
 class SiteGraph:
     """a directed graph of a domain's hyper links, ignoring
@@ -22,26 +24,33 @@ class SiteGraph:
     def __init__(self):
         self.vertices = []
         self.edges = []
-    def addEdge(self, edge):
+    def add_edge(self, edge):
         """add a 2-tuple of vertices that exist in the graph"""
         assert len(edge) == 2
         for e in edge:
             if e not in self.vertices:
-                self.addVertex(e)
-        self.edges.append(edge)
-    def addVertex(self, vertex):
+                self.add_vertex(e)
+        if edge not in self.edges:
+            self.edges.append(edge)
+    def add_vertex(self, vertex):
         """wrap any object as a vertex"""
         vertex = PageVertex(vertex)
         self.vertices.append(vertex)
-    def compileVerts(self):
+    def compile_verts(self):
         """compiles vertex info"""
         for v in self.vertices:
             for e in (e for e in self.edges if e[0] is v ):
                 v.addNbr(e[1])
-    def inSequence(self, vertex):
+    # TODO: switch to underlined naming_scheme from camelcase namingScheme
+    def in_sequence(self, vertex):
         """detects whether a vertex is part of an independent page sequence"""
         pass  # return bool
-
+    def check_in_sequence(self):
+        result = []
+        for v in self.vertices:
+            result.append(self.in_sequence(v))
+        return result
+            
 class Swarmling(HTMLParser):
     """html page processor from the swarm"""
     def __init__(self, page, owner=None):
@@ -59,53 +68,90 @@ class Swarmling(HTMLParser):
             self.handle_link(attrs['href'])
         # return super().handle_starttag(tag, attrs)
     def handle_link(self, href):
-        self.owner.graph.addEdge( (self.page, href) )
-        self.owner.spawn(href)
+        # TODO: ignore URLs like "mailto:"
+        href_full = urljoin(self.owner.homepage, href)
+        if '#' in href: return
+        if self.owner.spawn(href):
+            self.owner.graph.add_edge( (self.page, href_full) )
+            print((self.page, href_full))
     def handle_data(self, data):
         super().handle_data(data)
 
-class Swarm():
+class Swarm:
     """swarmling factory that recursively follows domain layout"""
     def __init__(self, homepage):
         super().__init__()
         self.graph = SiteGraph()
+        self.origin = homepage
         self.homepage = homepage
         self.pages = [homepage]  # first element is homepage
         self.run(homepage)
     def run(self, page):
-        print('RUN>', page)
         self._spawn(page)
-        self.graph.compileVerts()
+        self.graph.compile_verts()
     def spawn(self, page):
-        # IDEA: Create a set of webpages which has a domain,
-        # and can resolve absolute and relative URLs identically
-        page = urljoin(self.homepage, page)
-        if page not in self.pages:
+        # IDEA: Create a set subclass for webpages,
+        # which has a domain, and can resolve absolute
+        # and relative URLs identically
+        result = False
+        if not validators.url(page):
+            page = urljoin(self.homepage, page)
+        # assert validators.url(page)
+        if page not in self.pages and within_domain(page, self.homepage):
             print('SPAWN>',page)
             self.pages.append(page)
             self._spawn(page)
+            result = True
+        return result
     def _spawn(self, page):
-        byteread = urlopen(page)
-        content = byteread.read().decode('utf-8')  # read and decode
-        # print(content, '\n' + 50* '=' +'\n')
-        ling = Swarmling(page, owner=self)
-        ling.feed(content)
-        ling.close()
+        try:
+            byteread = urlopen(page)
+            content = byteread.read().decode('utf-8')  # read and decode
+            # print(content, '\n' + 50* '=' +'\n')
+            ling = Swarmling(page, owner=self)
+            ling.feed(content)
+            ling.close()
+        # TODO: Replace this excuse of error handling
+        except HTTPError as e:
+            print(e)
 
 def main(args):
     if len(args) != 2:
+        # IDEA: find a more specific exception/make one
         raise Exception('Too many arguments passed to the script')
     target = args[1]
     s = Swarm(target)
-    # G = nx.DiGraph()
-    # G.add_nodes_from(s.graph.vertices)
-    # G.add_edges_from(s.graph.edges)
-    # nx.draw(G)
-    # nx.draw_shell(G)
-    # plt.show()
-    print('pages: ', s.pages)
-    print('edges: ', s.graph.edges)
-    print('verts: ', s.graph.vertices)
+
+    print('Pages: ')
+    [print(p) for p in s.pages]
+    print('Edges: ')
+    [print(e) for e in s.graph.edges]
+
+    # print('verts: ', s.graph.vertices)
 
 if __name__ == '__main__':
     main(sys.argv)
+
+### INTERACTIVE INTROSPECTION CLASS
+ 
+class DebugLinkFinder:
+    def __init__(self, page):
+        self.L = []
+        self.graph = SiteGraph()
+        self.origin = page
+        self.homepage = page
+        self.pages = [page]  # first element is homepage
+        try:
+            byteread = urlopen(page)
+            content = byteread.read().decode('utf-8')
+            ling = Swarmling(page, owner=self)
+            ling.feed(content)
+            ling.close()
+        except Exception as e:
+            print(e)
+        for l in self.L: print(l)
+    def spawn(self, page):
+        if not validators.url(page):
+            page = urljoin(self.homepage, page)
+        if within_domain(page, self.homepage):
+            self.L.append(page)

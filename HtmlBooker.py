@@ -33,7 +33,7 @@ class PageVertex:
         return len([v for v in verts if v in self.nbrs])
         # return not almost( (v in self.nbrs for v in verts) )
     def __eq__(self, other):
-        return str(self) == str(other) 
+        return self.obj == other.obj
     def __str__(self):
         return str(self.obj)
     def __repr__(self):
@@ -50,21 +50,22 @@ class SiteGraph:
     def add_edge(self, edge):
         """add a 2-tuple of vertices that exist in the graph"""
         assert len(edge) == 2
+        edge = (PageVertex(edge[0], self), PageVertex(edge[1],self))
         for e in edge:
             if e not in self.vertices:
                 self.add_vertex(e)
         if edge not in self.edges:
             self.edges.append(edge)
-    def add_vertex(self, vertex):
+    def add_vertex(self, vert):
         """wrap any object as a vertex"""
-        vertex = PageVertex(vertex, self)
-        self.vertices.append(vertex)
+        if type(vert) != PageVertex:
+            vert = PageVertex(vertex, self)
+        self.vertices.append(vert)
     def compile_verts(self):
         """compiles vertex info"""
         for v in self.vertices:
-            for e in (e for e in self.edges if e[0] is v ):
+            for e in (e for e in self.edges if e[0] == v ):
                 v.addNbr(e[1])
-    # TODO: switch to underlined naming_scheme from camelcase namingScheme
     def sequential_verts(self):
         """checks the entire graph for all sequential vertices"""
         result = {}
@@ -96,13 +97,9 @@ class Swarmling(HTMLParser):
             if not validators.url(href):
                 href = urljoin(self.owner().homepage, href)
             self.handle_link(href)
-        # return super().handle_starttag(tag, attrs)
     def handle_link(self, href):
         if self.owner().spawn(href):
             self.owner().graph.add_edge( (self.page, href) )
-            # print((self.page, href))
-    def handle_data(self, data):
-        super().handle_data(data)
 
 class Swarm:
     """swarmling factory"""
@@ -146,10 +143,15 @@ def main(args):
 
     # print('Pages: ')
     # [print(p) for p in s.pages]
-    # print('Edges: ')
-    # [print(e) for e in s.graph.edges]
-    
+    print('Edges: ')
+    [print(e) for e in s.graph.edges]
+    print('Vert Values: ')
     [print('{}\t:\t{}'.format(k,v)) for k,v in s.graph.sequential_verts().items()]
+    print('Vert Nbrs')
+    for v in s.graph.vertices:
+        print(v)
+        for i in v.nbrs:
+            print('\t', i)
 
 if __name__ == '__main__':
     main(sys.argv)

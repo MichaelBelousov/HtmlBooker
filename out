@@ -1,7 +1,0 @@
-import validators
-from urllib.request import urlopen
-from urllib.parse import urljoin, urlparse
-from urllib.error import *
-import sys
-from html.parser import HTMLParser
-

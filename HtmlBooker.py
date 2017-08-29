@@ -1,4 +1,5 @@
 import validators
+import bleach
 from urllib.request import urlopen
 from urllib.parse import urljoin, urlparse
 from urllib.error import *
@@ -7,7 +8,8 @@ from html.parser import HTMLParser
 from weakref import ref
 import statistics as stats
 from abc import ABCMeta
-from html2text import html2text
+import pdfkit
+from bs4 import BeautifulSoup
 
 # TODO: Rewrite this entire thing to work off a single table of contents if available
 # talk about overengineering
@@ -202,6 +204,14 @@ class TOCParser(HTMLParser):
     def get_toc_order(self):
         return self.links
 
+def strip(content):
+    # bleach.delinkify(content)
+    soup = BeautifulSoup(content, 'html5lib')
+    links = soup.findAll('a')
+    for l in links:
+        l.replaceWithChildren()
+    return soup.prettify()
+
 def order_pages(swarm):
     pages = swarm.graph.get_page_types()
     # find table of contents
@@ -209,6 +219,9 @@ def order_pages(swarm):
     for p in pages:
         if pages[p] == SiteMap:
             tableofcon = p
+        elif pages[p] in (Sequential, SequenceCap):
+            # delinkify excess from sequential pages
+            visited_pages[p] = strip(visited_pages[p])
     assert tableofcon
     tableproc = TOCParser(swarm.homepage)
     tableproc.feed(visited_pages[swarm.homepage])
@@ -240,21 +253,28 @@ def order_pages(swarm):
 # TODO: separate pieces into multiple files
 # NOTE: create a case-by-base analysis for different html books,
 # those with table of contents (get book order right there), those without, etc
+# TODO: keep all swarming local to parameter directory?
 def main(args):
     if len(args) != 2:
         # TODO: find a more specific exception/make one
-        raise Exception('Too many arguments passed to the script')
+        raise Exception(\
+"""Wrong argument count ({}) passed to the script,
+calling the script should be something like:
+python HtmlBooker.py http://example.com/homepage"""\
+        .format(len(args)-1))
+
     target = args[1]
     # The swarm will take its time determining all the pages on
     # the target, and their types relative to reformating it 
     # into a book
     s = Swarm(target)
-    # [print(i, '\n\t', i.nbrs) for i in s.graph.vertices]
     book = order_pages(s)
-    with open('out', 'r+') as f:
-        for p in book:
-            # print(p)
-            f.write(html2text(visited_pages[p]))
+    print('PAGES>')
+    [print(k) for k in visited_pages.keys()]
+    print('TYPES>')
+    {print(k):print(type(visited_pages[k])) for k in visited_pages}
+    text = '\n'.join( (visited_pages[p] for p in book) )
+    pdfkit.from_string(text, 'out.pdf')
 
 if __name__ == '__main__':
     main(sys.argv)

@@ -269,10 +269,7 @@ python HtmlBooker.py http://example.com/homepage"""\
     # into a book
     s = Swarm(target)
     book = order_pages(s)
-    print('PAGES>')
-    [print(k) for k in visited_pages.keys()]
-    print('TYPES>')
-    {print(k):print(type(visited_pages[k])) for k in visited_pages}
+    [print(b) for b in book]
     text = '\n'.join( (visited_pages[p] for p in book) )
     pdfkit.from_string(text, 'out.pdf')
 
